@@ -1,7 +1,7 @@
 {
   "name": "my-photo-app",
   "version": "1.0.0",
-  "description": "Приложение для фотосъемки собеседника с отправкой в Telegram",
+  "description": "Мобильное приложение для фото собеседника с отправкой в Telegram",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
